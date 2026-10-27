@@ -1,0 +1,6 @@
+# 例3: ルールを生成するルール（?? エスケープ）
+main
+  -> (mkid ?f) (-> (?f ??x) ??x)
+  -> (main ?..rules ?r) ?r
+  mkid id
+  id foo

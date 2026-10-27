@@ -1,0 +1,32 @@
+# 例5: 2-タグシステム（De Mol の Collatz 系 a -> bc, b -> a, c -> aaa）
+# docs/turing-completeness.md の翻訳規則 T の実例。語 a^n は Collatz の列に沿って a^1 まで縮む
+main
+  # 先頭の記号に応じて、先頭の 2 記号を消し、生成規則を末尾に足す
+  ->
+    tag a ?y ?..w
+    tag ?..w b c
+  ->
+    tag b ?y ?..w
+    tag ?..w a
+  ->
+    tag c ?y ?..w
+    tag ?..w a a a
+  # 長さが 2 未満になったら停止し、残った語を文字列にする
+  -> tag ""
+  ->
+    tag ?x
+    show ?x
+  ->
+    show a
+    "a"
+  ->
+    show b
+    "b"
+  ->
+    show c
+    "c"
+  ->
+    main ?..rules ?r
+    ?r
+  # 初期語 a^7。奇数 n は 3n+1 を経ずに (3n+1)/2 へ進むので、a^n の n は 7 -> 11 -> 17 -> 26 -> 13 -> 20 -> 10 -> 5 -> 8 -> 4 -> 2 -> 1
+  tag a a a a a a a

@@ -1,0 +1,8 @@
+# 例1: 足し算の結果を棒の本数で出力する（2 + 1 = |||）
+main
+  -> (add z ?n) ?n
+  -> (add (s ?m) ?n) (s: add ?m ?n)
+  -> (show z) ""
+  -> (show: s ?n) (++ "|": show ?n)
+  -> (main ?..rules ?r) ?r    # ルール群（自分自身を含む）ごと main を畳む
+  show: add (s: s z) (s z)

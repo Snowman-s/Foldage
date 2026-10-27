@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>木を畳む言語の動作原理 | Foldage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&family=Shippori+Mincho:wght@600;700&display=swap">
+<style>
+/* 一段組の読み物。本文は 42rem、図は 60rem まで広げる。木の図は色で「ノードの種類」と「書き換えの印」を表す */
+:root {
+  --bg: #f3f6f7;
+  --surface: #ffffff;
+  --ink: #17222b;
+  --muted: #56656f;
+  --line: #d2dadf;
+  --tint: #e7edf0;
+  --accent: #2456c4;
+  --on-accent: #ffffff;
+  --next: #a86400;
+  --rule-bg: #e1eddc;
+  --rule-line: #4f7448;
+  --str-bg: #f8e9de;
+  --str-line: #a3653b;
+  --var: #6744b4;
+  --display: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --sans: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+  --mono: "IBM Plex Mono", "Consolas", "Menlo", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10161b; --surface: #172028; --ink: #e2e8ed; --muted: #94a3ae; --line: #2d3a45;
+    --tint: #1d2a33; --accent: #719fff; --on-accent: #0c1420; --next: #f0a53c;
+    --rule-bg: #1c2d21; --rule-line: #93bd8a; --str-bg: #2f241c; --str-line: #dca27a; --var: #b8a0f4;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10161b; --surface: #172028; --ink: #e2e8ed; --muted: #94a3ae; --line: #2d3a45;
+  --tint: #1d2a33; --accent: #719fff; --on-accent: #0c1420; --next: #f0a53c;
+  --rule-bg: #1c2d21; --rule-line: #93bd8a; --str-bg: #2f241c; --str-line: #dca27a; --var: #b8a0f4;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15.5px;
+  line-height: 1.85;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0;
+}
+.wrap { max-width: 60rem; margin: 0 auto; padding-block: 3.5rem 5rem; display: grid; gap: 4rem; }
+section, header { display: grid; gap: 1.1rem; min-width: 0; }
+.prose { max-width: 42rem; display: grid; gap: .9rem; }
+.prose > * { margin: 0; }
+
+h1, h2, h3 { font-family: var(--display); font-weight: 700; text-wrap: balance; margin: 0; line-height: 1.35; }
+h1 { font-size: clamp(2rem, 5vw, 2.9rem); letter-spacing: .02em; }
+h2 { font-size: 1.6rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+h3 { font-size: 1.15rem; margin-top: .6rem; }
+.eyebrow { font-size: .78rem; letter-spacing: .14em; color: var(--muted); font-weight: 500; }
+.lede { font-size: 1.08rem; }
+.meta { font-size: .85rem; color: var(--muted); }
+a { color: var(--accent); }
+ul { padding-left: 1.3em; margin: 0; display: grid; gap: .3rem; }
+
+code, pre, kbd { font-family: var(--mono); }
+:not(pre) > code {
+  font-size: .9em; background: var(--tint); padding: .08em .35em; border-radius: 3px;
+  white-space: nowrap;
+}
+pre {
+  margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  padding: .8rem 1rem; font-size: .86rem; line-height: 1.55; overflow-x: auto;
+}
+
+figure { margin: 0; display: grid; gap: .6rem; min-width: 0; }
+figcaption { font-size: .86rem; color: var(--muted); max-width: 42rem; }
+.scroll { overflow-x: auto; min-width: 0; }
+
+table { border-collapse: collapse; font-size: .9rem; width: 100%; }
+th, td { text-align: left; padding: .45rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: .8rem; letter-spacing: .06em; }
+td code { white-space: nowrap; }
+
+/* 木の図 */
+svg.tree { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.tree .edge { stroke: var(--muted); stroke-width: 1; opacity: .7; }
+.tree text { font-family: var(--mono); font-size: 12px; fill: var(--ink); dominant-baseline: central; text-anchor: middle; }
+.nd rect { fill: var(--surface); stroke: var(--ink); stroke-width: 1; }
+.nd-str rect { fill: var(--str-bg); stroke: var(--str-line); }
+.nd-var rect { fill: var(--surface); stroke: var(--var); stroke-dasharray: 3 2; }
+.nd-var text { fill: var(--var); font-style: italic; }
+.nd-rule rect, .nd-arrow rect { fill: var(--rule-bg); stroke: var(--rule-line); }
+.nd-rule text, .nd-arrow text { fill: var(--rule-line); font-weight: 500; }
+.nd-outer rect { fill: none; stroke: var(--muted); stroke-dasharray: 4 3; }
+.nd-outer text { fill: var(--muted); font-family: var(--sans); }
+.tree .edge-outer { stroke-dasharray: 4 3; }
+.nd.is-applied rect { stroke-width: 2.6; }
+.nd.is-fresh rect { fill: var(--accent); stroke: var(--accent); }
+.nd.is-fresh text { fill: var(--on-accent); }
+.tree .next-ring { fill: none; stroke: var(--next); stroke-width: 2; stroke-dasharray: 4 3; }
+.tree .badge rect { fill: var(--ink); }
+.tree .badge text { fill: var(--bg); font-family: var(--sans); font-size: 10.5px; font-weight: 500; }
+
+/* 凡例 */
+.legend { display: flex; flex-wrap: wrap; gap: .6rem 1.4rem; font-size: .85rem; color: var(--muted); padding: .8rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.legend span { display: inline-flex; align-items: center; gap: .45rem; }
+.chip { font-family: var(--mono); font-size: .8rem; color: var(--ink); border: 1px solid var(--ink); border-radius: 4px; padding: 0 .45rem; background: var(--surface); line-height: 1.6; }
+.chip.str { background: var(--str-bg); border-color: var(--str-line); }
+.chip.var { color: var(--var); border: 1px dashed var(--var); font-style: italic; }
+.chip.rule { background: var(--rule-bg); border-color: var(--rule-line); color: var(--rule-line); border-radius: 999px; }
+.chip.fresh { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.chip.next { outline: 2px dashed var(--next); outline-offset: 2px; }
+
+/* 冒頭の 4 コマ */
+.strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; }
+.frame { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: .7rem .7rem .8rem; display: grid; grid-template-rows: auto 1fr auto; gap: .5rem; min-width: 0; }
+.frame .step { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
+.frame .art { display: grid; place-items: center; min-height: 9rem; }
+.frame p { margin: 0; font-size: .82rem; line-height: 1.55; }
+@media (max-width: 720px) { .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 構文と木の対応 */
+.syntax { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .8rem 1.2rem; align-items: center; }
+.syntax .art { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: .6rem; min-width: 0; }
+@media (max-width: 560px) { .syntax { grid-template-columns: minmax(0, 1fr); } }
+
+.pair { display: flex; flex-wrap: wrap; gap: 1rem; align-items: stretch; }
+.pair > div { flex: 1 1 15rem; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: .8rem; display: grid; gap: .5rem; align-content: start; }
+.pair .verdict { font-size: .85rem; line-height: 1.6; margin: 0; }
+.pair .verdict strong { font-family: var(--mono); }
+.pair .between { flex: 0 0 auto; background: none; border: 0; display: grid; place-items: center; font-size: .82rem; color: var(--muted); text-align: center; padding: 0 .2rem; }
+.panel-head { font-size: .75rem; letter-spacing: .1em; color: var(--muted); }
+.figrows { display: grid; gap: 1rem; }
+.ladder { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .7rem; font-size: .85rem; color: var(--muted); padding: .8rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+
+/* フローチャート */
+.flow { color: var(--ink); display: block; min-width: 560px; max-width: 720px; width: 100%; height: auto; }
+.flow text { font-family: var(--sans); font-size: 13px; fill: currentColor; dominant-baseline: central; }
+.flow .lbl { font-size: 11.5px; fill: var(--muted); }
+.flow .box rect { fill: var(--surface); stroke: currentColor; }
+.flow .dec rect { fill: var(--tint); stroke: currentColor; }
+.flow .end rect { fill: var(--accent); stroke: var(--accent); }
+.flow .end text { fill: var(--on-accent); }
+.flow .fail rect { fill: var(--surface); stroke: var(--next); stroke-dasharray: 5 3; }
+.flow .wire { fill: none; stroke: currentColor; stroke-width: 1.2; }
+
+/* ステップ実行 */
+.tabs { display: flex; flex-wrap: wrap; gap: .4rem; }
+.tabs button, .controls button {
+  font: inherit; font-size: .88rem; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 5px; padding: .35rem .8rem; cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.tabs button:hover, .controls button:hover:not(:disabled) { border-color: var(--ink); }
+.controls button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.controls { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
+.controls input[type="range"] { flex: 1 1 10rem; accent-color: var(--accent); min-width: 0; }
+.controls output { font-family: var(--mono); font-size: .85rem; font-variant-numeric: tabular-nums; min-width: 7.5em; text-align: right; }
+.stage { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; display: grid; gap: 1rem; min-width: 0; }
+.caption { display: grid; gap: .35rem; }
+.caption .note { margin: 0; font-weight: 500; }
+.caption dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .15rem .9rem; font-size: .86rem; }
+.caption dt { color: var(--muted); }
+.caption dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.caption dd code { white-space: normal; }
+.stage-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.tree-pane { min-height: 20rem; display: grid; place-items: center; overflow-x: auto; min-width: 0; }
+.src-head { font-size: .75rem; letter-spacing: .1em; color: var(--muted); margin-bottom: .3rem; }
+.src-pane pre { max-height: 26rem; background: var(--bg); }
+@media (max-width: 760px) { .stage-grid { grid-template-columns: minmax(0, 1fr); } .tree-pane { min-height: 0; } }
+#ruleTable tr.is-applied td { background: var(--tint); }
+#ruleTable td:first-child { font-family: var(--mono); white-space: nowrap; }
+.src-note { color: var(--muted); font-size: .8rem; }
+
+footer { font-size: .82rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow"><a href="./">Foldage</a> — 木構造の書き換えで進む難解言語</div>
+  <h1>木を畳む言語の動作原理</h1>
+  <div class="prose">
+    <p class="lede">プログラムは 1 本の木です。実行とは、ルールに当たった部分木を 1 箇所ずつ置き換え、木を葉から根へ畳んでいくことです。根が単一のアトムになったら、それが出力になります。</p>
+    <p>ルールも木の一部です。だからプログラムは、最後に自分のルールごと根を畳まないと終われません。自分を書き換えることが、終了の条件そのものになっています。</p>
+    <p class="meta"><a href="spec.html">言語仕様</a>の内容を図にしたものです。</p>
+  </div>
+  <figure>
+    <div class="strip" id="heroStrip"></div>
+    <figcaption>例2（メタ書き換え）の全 3 ステップ。ルール G が別のルール M に書き換えられ、書き換わった G' で <code>greet</code> が畳まれ、最後に根 <code>main</code> がルールごと消えて <code>goodbye</code> が残る。</figcaption>
+  </figure>
+</header>
+
+<section id="material">
+  <h2>木の材料</h2>
+  <div class="prose">
+    <p>すべてのノードは「ラベル 1 つ + 子の列」です。子を持たないノードがアトムで、<code>greet</code> と「子が 0 個のノード <code>greet</code>」は同じものです。</p>
+    <ul>
+      <li><strong>シンボル</strong>は名前で区別されるだけの値で、分解も連結もできません。</li>
+      <li><strong>文字列</strong>は引用符で囲んだ値で、組込みの <code>++</code> で連結できます。シンボル <code>abc</code> と文字列 <code>"abc"</code> は別物で、マッチしません。</li>
+      <li>子を持つノードのラベルはシンボルに限ります。文字列は葉にだけ現れます。</li>
+      <li>2 つのノードが一致するのは、ラベルが等しく、子の数が等しく、子どうしもそれぞれ一致するときです。</li>
+    </ul>
+  </div>
+  <div class="legend" aria-label="図の凡例">
+    <span><b class="chip">add</b>シンボル</span>
+    <span><b class="chip str">"|"</b>文字列</span>
+    <span><b class="chip var">?n</b>変数</span>
+    <span><b class="chip rule">R1</b>ルール（中身を畳んで名前だけ表示）</span>
+    <span><b class="chip fresh">s</b>直前の書き換えで生まれたノード</span>
+    <span><b class="chip next">add</b>次に書き換わる位置</span>
+  </div>
+
+  <h3>ソースから木へ</h3>
+  <div class="prose">
+    <p>1 行が 1 ノードです。先頭のトークンがラベル、残りのトークンが葉の子になり、1 段深くインデントした後続行がさらに子になります。トークン末尾の <code>:</code> は「その位置から右側全体を最後の子にする」という意味で、右に深い木を 1 行で書けます。最後以外の子を 1 行に入れ子にしたいときは <code>add (s: s z) (s z)</code> のように括弧で囲みます。括弧は入力専用の書き方で、トレースの表示には現れません。</p>
+  </div>
+  <figure>
+    <div class="syntax" id="syntaxFig"></div>
+    <figcaption>左のソースと右の木は同じものを表す。<code>:</code> は右結合なので、<code>s: s: s z</code> は右へ 3 段沈む。</figcaption>
+  </figure>
+</section>
+
+<section id="rules">
+  <h2>ルールもただのノード</h2>
+  <div class="prose">
+    <p>ラベルが <code>-&gt;</code> で子が 2 つ（パターン、置換）のノードがルールです。構文上の特別扱いはありません。ただし、置換に出てくるレベル 1 の変数がすべてパターンにも出てくる場合に限ってルールとして働きます。この条件を満たさない <code>-&gt;</code> ノードはただのデータです。</p>
+  </div>
+  <figure>
+    <div class="art" id="ruleFig"></div>
+    <figcaption>例1 のルール R4。<code>show</code> の下に <code>s</code> がある部分木を、<code>"|"</code> を 1 本連結する形に置き換える。</figcaption>
+  </figure>
+  <div class="prose">
+    <p>ルールの内部は<strong>不透明</strong>です。中には書き換えが入り込みません。一方で、ルールのノード全体は他のルールのマッチ対象になります。この 2 つの性質から次のことが言えます。</p>
+    <ul>
+      <li>ルールを書き換えるルール（メタルール）が書ける。</li>
+      <li>ルールの中身は評価されないので、評価を遅らせた式（quote）としても使える。</li>
+      <li>ルールは自分自身のノードにも、自分を含む親ノードにもマッチできる。</li>
+    </ul>
+  </div>
+  <div class="prose">
+    <p>パターンと置換に書く変数 <code>?</code> は、次の節で説明します。</p>
+  </div>
+</section>
+
+<section id="vars">
+  <h2>変数 ?</h2>
+  <div class="prose">
+    <p>パターンと置換の中で <code>?</code> で始まるトークンが変数です。<code>?</code> の個数がレベルを表し、その場の束縛に使われるのはレベル 1 だけです。レベル 2 以上は、ルールを生成するルールのための仕組みです。</p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>書き方</th><th>意味</th></tr></thead>
+      <tbody>
+        <tr><td><code>?x</code></td><td>レベル 1 の変数。パターンでは部分木を束縛し、置換では束縛した部分木に置き換わる。</td></tr>
+        <tr><td><code>?f ...</code></td><td>子を持つノードのラベルに置いた変数。ラベルにだけ一致する。</td></tr>
+        <tr><td><code>?..xs</code></td><td>列変数。兄弟の連続する 0 個以上を束縛し、置換では展開して埋め込む。1 つの子の列に複数置いた場合は、左から最短一致で束縛する。</td></tr>
+        <tr><td><code>??x</code></td><td>レベル 2 の変数。パターンでは字面の <code>?x</code> に一致し、置換では <code>?x</code> を生成する。</td></tr>
+        <tr><td>同じ変数を 2 回</td><td>同じ構造であることを要求する（非線形マッチ）。</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>束縛と置き換え</h3>
+  <div class="prose">
+    <p>ルールを当てるとき、パターンの <code>?x</code> は、対象の木で同じ位置にある部分木に一致し、それを束縛します。置換の <code>?x</code> は、束縛した部分木に置き換わります。束縛が有効なのは、その 1 回の適用の中だけです。</p>
+  </div>
+  <figure>
+    <div class="figrows">
+      <div class="pair" id="bindFig1"></div>
+      <div class="pair" id="bindFig2"></div>
+    </div>
+    <figcaption>例1 の step 1。R2 のパターンを外側の <code>add</code> に当てると <code>?m</code> と <code>?n</code> が束縛され、置換の同じ名前の位置にそのまま差し込まれる。</figcaption>
+  </figure>
+  <div class="prose">
+    <p>置換の中に入れ子の <code>-&gt;</code> があっても、レベル 1 の変数はその中まで残らず置き換わります。ルールの内部が不透明なのは書き換え位置としての話です。置換を組み立てるときの代入は、ルールの中にも及びます。</p>
+  </div>
+
+  <h3>ルールとして働く条件</h3>
+  <div class="prose">
+    <p>置換に現れるレベル 1 の変数は、すべてパターンにも現れていなければなりません。満たさない <code>-&gt;</code> ノードはルールとして働かず、ただのデータになります。値の決まらない変数を木に書き出さないための条件です。</p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>ノード</th><th>扱い</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td><code>-&gt; (add z ?n) ?n</code></td><td>ルール</td><td>置換の <code>?n</code> がパターンにある</td></tr>
+        <tr><td><code>-&gt; greet ?x</code></td><td>データ</td><td>置換の <code>?x</code> がパターンにない</td></tr>
+        <tr><td><code>-&gt; (mkid ?f) (-&gt; (?f ??x) ??x)</code></td><td>ルール</td><td>置換のレベル 1 の変数は <code>?f</code> だけで、パターンにある。<code>??x</code> はレベル 2 なので数えない</td></tr>
+        <tr><td><code>-&gt; (mkid ?f) (-&gt; (?f ?x) ?x)</code></td><td>データ</td><td>入れ子の <code>-&gt;</code> の中の <code>?x</code> もレベル 1 として数える。<code>?x</code> はパターンにない</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>同じ変数を 2 回: 非線形マッチ</h3>
+  <div class="prose">
+    <p>パターンに同じ変数が 2 回以上現れると、それらの位置の部分木が同じ構造であることを要求します。等しさの判定に組込みは要りません。構造の比較なので、シンボル <code>abc</code> と文字列 <code>"abc"</code> は等しくありません。</p>
+  </div>
+  <figure>
+    <div class="pair" id="eqFig"></div>
+    <figcaption>ルール <code>-&gt; (eq ?x ?x) yes</code> を 2 つの対象に当てた場合。2 つ目の <code>?x</code> は、1 つ目で束縛した <code>z</code> と同じ構造でなければ一致しない。</figcaption>
+  </figure>
+
+  <h3>列変数 ?..xs</h3>
+  <div class="prose">
+    <p>兄弟の並びのうち、連続する 0 個以上をまとめて束縛します。置換では、束縛した並びを展開してその位置に埋め込みます。</p>
+  </div>
+  <figure>
+    <div class="pair" id="seqFig"></div>
+    <figcaption>例4 の P（<code>-&gt; (rev ?c ?..rest) (++ (rev ?..rest) ?c)</code>）の step 1。先頭の 1 個が <code>?c</code>、残りの 2 個が <code>?..rest</code> に入る。</figcaption>
+  </figure>
+  <div class="prose">
+    <p>空の並びにも一致します。<code>rev "c"</code> に当てると <code>?..rest</code> は空になり、置換の <code>rev ?..rest</code> は子のない <code>rev</code>、つまりシンボル <code>rev</code> の葉になります。根を畳むルール <code>main ?..rules ?r</code> も列変数を使っており、<code>?r</code> が最後の子に、<code>?..rules</code> がそれより前のすべての子に当たります。</p>
+  </div>
+
+  <h3>列変数が複数あるとき: 最短一致</h3>
+  <div class="prose">
+    <p>1 つの子の列に、列変数を複数置けます。そのままでは分け方が何通りもありうるので、左の列変数ほど短く取ると決めています。列変数の長さの組を左から辞書式に小さい順に試し、パターン全体が一致した最初の組を採ります。</p>
+    <p>たとえば <code>f ?..a ?..b</code> を <code>f 1 2</code> に当てると、<code>?..a</code> は空、<code>?..b</code> は <code>1 2</code> になります。列変数が 1 個だけなら、長さは子の数から一意に決まります。</p>
+  </div>
+  <figure>
+    <div class="pair" id="shortFig"></div>
+    <figcaption><code>x</code> が 2 回出てくる並びに当てた場合。<code>?..a</code> をできるだけ短く取るので、最初の <code>x</code> で区切られ、残りはすべて <code>?..b</code> に入る。</figcaption>
+  </figure>
+
+  <h3>ラベルの位置に置いた変数</h3>
+  <div class="prose">
+    <p>単独で置いた <code>?x</code> は、任意の部分木に一致します。子を持つノードのラベルに置いた <code>?f</code> は、ラベルにだけ一致します。子の数は一致させる必要があります。</p>
+    <p>子を持つノードのラベルはシンボルに限ります。そのため、置換のラベル位置に置いた変数が文字列や子を持つ部分木に束縛されていた場合、そのルールは当たりません。列変数はラベル位置には置けません。</p>
+  </div>
+  <figure>
+    <div class="pair" id="labelFig"></div>
+    <figcaption>パターン <code>?f ?x</code> は「子が 1 つのノード」に一致し、<code>?f</code> にはラベルだけが入る。</figcaption>
+  </figure>
+
+  <h3>レベル: ? の個数</h3>
+  <div class="prose">
+    <p><code>?</code> の個数がレベルです。ルールを 1 回適用するたびに、そのルールに書かれた変数は <code>?</code> が 1 つ消費されます。レベル 1 の変数だけがその場で束縛に使われます。レベル 2 以上の変数は、<code>?</code> を 1 つ減らした字面のトークンとして扱われます。</p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>書き方</th><th>パターンの中</th><th>置換の中</th></tr></thead>
+      <tbody>
+        <tr><td><code>?x</code></td><td>任意の部分木に一致して束縛する</td><td>束縛した部分木に置き換わる</td></tr>
+        <tr><td><code>??x</code></td><td>字面の <code>?x</code> に一致する</td><td><code>?x</code> を生成する</td></tr>
+        <tr><td><code>???x</code></td><td>字面の <code>??x</code> に一致する</td><td><code>??x</code> を生成する</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure>
+    <div class="ladder" role="img" aria-label="???x はルールの適用ごとに ??x、?x と下がり、最後に束縛した部分木に置き換わる">
+      <b class="chip var">???x</b><span>適用</span><b class="chip var">??x</b><span>適用</span><b class="chip var">?x</b><span>適用</span><b class="chip">束縛した部分木</b>
+    </div>
+    <figcaption>レベル 3 の変数は、3 回の適用を経て初めて値に置き換わる。適用のたびに次のルールが生成され、その中では 1 段下がった変数として働く。</figcaption>
+  </figure>
+  <div class="prose">
+    <p><code>??</code> が要るのは、ルールを生成するルールのためです。例3 の K は、置換の中に、生成するルール N の変数を書く必要があります。ここに <code>?x</code> と書くと、K の適用時に代入の対象になってしまいます。さらに K のパターンにない変数を置換で使うことになるので、K はルールとして働きません（上の条件の表の 4 行目）。<code>??x</code> と書けば、K の適用では <code>?x</code> を生成するだけで済み、生成された N の中で初めて変数として働きます（<a href="#self">自分を書き換える</a>の図）。</p>
+    <p>パターン側の <code>??x</code> は、変数を含むルールそのものに当てるのに使います。たとえば <code>-&gt; (-&gt; (id ??x) ??x) (-&gt; (id ??x) done)</code> は、例3 で生成された N（<code>-&gt; (id ?x) ?x</code>）に字面で一致し、それを <code>-&gt; (id ?x) done</code> に書き換えます。</p>
+  </div>
+</section>
+
+<section id="step">
+  <h2>1 ステップの進み方</h2>
+  <div class="prose">
+    <p>1 ステップで書き換えるのは 1 箇所だけです。書き換えたら、木の走査を先頭からやり直します。書き換えられる箇所がどこにもなくなったら止まります。</p>
+  </div>
+  <figure>
+    <div class="scroll">
+      <svg class="flow" viewBox="0 0 720 410" role="img" aria-label="1 ステップの流れ。帰りがけ順に位置を調べ、近いスコープからルールを試し、当たれば 1 箇所を置換して最初からやり直す。位置が尽きたら、根がアトムなら出力、そうでなければ折りたたみ失敗。">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g class="box"><rect x="100" y="14" width="240" height="36" rx="4"/><text x="220" y="32" text-anchor="middle">先頭の位置から走査を始める</text></g>
+        <g class="box"><rect x="100" y="84" width="240" height="36" rx="4"/><text x="220" y="102" text-anchor="middle">帰りがけ順で次の位置へ進む</text></g>
+        <g class="dec"><rect x="110" y="154" width="220" height="36" rx="18"/><text x="220" y="172" text-anchor="middle">まだ調べていない位置がある?</text></g>
+        <g class="box"><rect x="100" y="224" width="240" height="36" rx="4"/><text x="220" y="242" text-anchor="middle">近いスコープから順にルールを試す</text></g>
+        <g class="dec"><rect x="110" y="294" width="220" height="36" rx="18"/><text x="220" y="312" text-anchor="middle">当たるルールがある?</text></g>
+        <g class="box"><rect x="100" y="364" width="240" height="36" rx="4"/><text x="220" y="382" text-anchor="middle">その 1 箇所だけを置換する</text></g>
+        <g class="dec"><rect x="420" y="154" width="220" height="36" rx="18"/><text x="530" y="172" text-anchor="middle">根は単一のアトム?</text></g>
+        <g class="end"><rect x="420" y="224" width="220" height="36" rx="4"/><text x="530" y="242" text-anchor="middle">そのアトムを出力して終了</text></g>
+        <g class="fail"><rect x="420" y="294" width="220" height="36" rx="4"/><text x="530" y="312" text-anchor="middle">折りたたみ失敗（エラー終了）</text></g>
+
+        <line class="wire" x1="220" y1="50" x2="220" y2="82" marker-end="url(#ah)"/>
+        <line class="wire" x1="220" y1="120" x2="220" y2="152" marker-end="url(#ah)"/>
+        <line class="wire" x1="220" y1="190" x2="220" y2="222" marker-end="url(#ah)"/>
+        <text class="lbl" x="230" y="206">はい</text>
+        <line class="wire" x1="220" y1="260" x2="220" y2="292" marker-end="url(#ah)"/>
+        <line class="wire" x1="220" y1="330" x2="220" y2="362" marker-end="url(#ah)"/>
+        <text class="lbl" x="230" y="346">はい</text>
+        <path class="wire" d="M110 312 H60 V102 H98" marker-end="url(#ah)"/>
+        <text class="lbl" x="85" y="302" text-anchor="middle">いいえ</text>
+        <path class="wire" d="M100 382 H30 V32 H98" marker-end="url(#ah)"/>
+        <text class="lbl" x="64" y="22" text-anchor="middle">やり直す</text>
+        <line class="wire" x1="330" y1="172" x2="418" y2="172" marker-end="url(#ah)"/>
+        <text class="lbl" x="374" y="162" text-anchor="middle">いいえ</text>
+        <line class="wire" x1="530" y1="190" x2="530" y2="222" marker-end="url(#ah)"/>
+        <text class="lbl" x="540" y="206">はい</text>
+        <path class="wire" d="M640 172 H664 V312 H642" marker-end="url(#ah)"/>
+        <text class="lbl" x="670" y="242">いいえ</text>
+      </svg>
+    </div>
+    <figcaption>左の柱が 1 ステップ。置換したら必ず先頭に戻るので、木のどこかが変わるたびに全体が調べ直される。</figcaption>
+  </figure>
+
+  <h3>位置を調べる順序: 帰りがけ順（最左最内）</h3>
+  <div class="prose">
+    <p>子をすべて調べてから親を調べ、兄弟は左から調べます。ルールのノードは 1 つの位置として扱い、内部には入りません。最内を採るのは、折りたたみが葉から根へ向かう操作だからです。最外にすると、中身が未計算のまま根が先に畳まれてしまいます。</p>
+    <p>根は必ず最後に調べられる位置です。そのため根を畳むルールは、他に書き換える箇所がなくなって初めて当たります。</p>
+  </div>
+  <figure>
+    <div class="pair" id="orderFig"></div>
+    <figcaption>例2 のルールで、<code>greet</code> の位置を変えた比較。番号は調べる順序。ルールが置かれた位置そのものが意味を持つ。右では結果が先頭の子になるので、F を、先頭の子を取り出す F' <code>-&gt; (main ?r ?..rules) ?r</code> に替えている。</figcaption>
+  </figure>
+
+  <h3>ルールを試す順序: 近いスコープから</h3>
+  <div class="prose">
+    <p>ルールは親ノードの部分木に作用します。範囲には親自身も含みます（含めないと根を畳めないため）。ある位置で試すルールの順序は次のとおりで、最初に当たったものを適用します。</p>
+    <ul>
+      <li>その位置自身の子にあるルール、親の子にあるルール、さらにその親の子にあるルール、と近いスコープから順に試す。</li>
+      <li>同じスコープの中では左のルールから試す。</li>
+      <li>根の子にあるルールまで当たらなければ、最後に外側スコープのルールを試す。</li>
+    </ul>
+  </div>
+  <figure>
+    <div class="art" id="scopeFig"></div>
+    <figcaption>点線枠の <code>x</code> を調べるときの試行順。<code>x</code> 自身と親 <code>g</code> の子にはルールがないので、<code>f</code> の子 B, C、<code>main</code> の子 A, D の順に試し、最後（5 番目）に外側スコープの連結ルール群を試す。外側スコープは木の一部ではないので点線で示している。</figcaption>
+  </figure>
+
+  <h3>組込みの連結 ++</h3>
+  <div class="prose">
+    <p>根よりさらに外側に、木には現れないスコープ（外側スコープ）が 1 つあるものとします。そこには、任意の文字列 <code>"a"</code>、<code>"b"</code> について、ルール <code>-&gt; (++ "a" "b") "ab"</code> が置かれているものとして扱います。これが唯一の組込みです。</p>
+    <ul>
+      <li>ルールは無限個あるが、どれも変数を含まない普通のルール。処理系は列挙せず、連結の計算で代用する。</li>
+      <li>子は 2 つに限る。子が 2 つでない <code>++</code> や、子にシンボルを含む <code>++</code> に当たるルールはないので、畳まれない。</li>
+      <li>外側スコープは根より外にあるので、どの位置でも最後に試される。利用者のルールのほうが近いスコープにあるので、上書きできる。</li>
+      <li>木の外にあるので、畳んで消す必要がなく、メタルールで書き換えることもできない。<code>++</code> は予約シンボルではない。</li>
+    </ul>
+    <p>純粋な書き換えでは字面に書かれたアトムしか作れません。計算した結果を文字列として出力するには、新しいアトムを作る仕組みが最低限 1 つ要るので、これだけを入れています。</p>
+  </div>
+</section>
+
+<section id="self">
+  <h2>自分を書き換える</h2>
+  <h3>ルールを書き換える</h3>
+  <div class="prose">
+    <p>例2 の M は <code>-&gt; (-&gt; greet hello) (-&gt; greet goodbye)</code> です。パターンが <code>-&gt;</code> ノードなので、ルール G のノード全体に当たり、G を別のルールに置き換えます（冒頭の 4 コマ）。書き換え後の G' には M のパターンがもう当たらないので、M は二度と発火しません。</p>
+  </div>
+
+  <h3>ルールを生成する</h3>
+  <div class="prose">
+    <p>例3 の K は <code>mkid ?f</code> を新しいルールに書き換えます。置換に含まれる <code>-&gt;</code> は K の内部にあるあいだは不透明なので働きません。木に書き出された時点で初めてルールとして働き始めます。</p>
+  </div>
+  <figure>
+    <div class="pair" id="escapeFig"></div>
+    <figcaption>K の置換部分が書き出されるときの変化。<code>?f</code> には束縛した <code>id</code> が入り、<code>??x</code> は <code>?</code> が 1 つ消費されて <code>?x</code> になる。結果のノードはそのままルール N として働く。</figcaption>
+  </figure>
+
+  <h3>自分を畳んで終わる</h3>
+  <div class="prose">
+    <p>どのサンプルも、根の子に <code>-&gt; (main ?..rules ?r) ?r</code> を置いています。根 <code>main</code> は最後に調べられる位置なので、計算が終わって最後の子 <code>?r</code> が値になってから当たります。このとき列変数 <code>?..rules</code> が、自分自身を含むすべてのルールを束縛して捨てます。</p>
+    <p>根がアトムになった時点で、木にルールは 1 本も残っていません。ルールを畳み込んで消すことまでがプログラムの仕事です。</p>
+  </div>
+</section>
+
+<section id="stepper">
+  <h2>サンプルを 1 ステップずつ</h2>
+  <div class="prose">
+    <p>言語仕様の第 8 章にある 4 本のサンプルです。後の例ほど新しい仕組みを足しているので、例1 から順に見ると読みやすくなります。右側のソースは、各ステップの木を正規形で書き出したもので、そのまま実行可能なソースになっています。ルールの中身も省略せずに表示しています。</p>
+    <p>手元では、処理系に <code>--trace</code> を付けて実行すると、同じ遷移が正規形で標準エラーに表示されます（<code>cargo run -- samples/ex1-add.fdg --trace</code>）。</p>
+  </div>
+  <div class="tabs" role="tablist" id="exTabs"></div>
+  <p class="prose" id="exIntro" style="margin:0"></p>
+  <div class="controls">
+    <button type="button" id="prevBtn" aria-label="前のステップ">前へ</button>
+    <input type="range" id="stepRange" min="0" max="1" value="0" aria-label="ステップ">
+    <button type="button" id="nextBtn" aria-label="次のステップ">次へ</button>
+    <output id="stepNo" for="stepRange"></output>
+  </div>
+  <div class="stage">
+    <div class="caption" id="stepCaption"></div>
+    <div class="stage-grid">
+      <div class="tree-pane" id="treePane"></div>
+      <div class="src-pane">
+        <div class="src-head">このステップのソース（正規形）</div>
+        <pre id="srcPane"></pre>
+      </div>
+    </div>
+  </div>
+  <div class="scroll">
+    <table id="ruleTable"></table>
+  </div>
+  <p class="src-note">左右の矢印キーでもステップを移動できます。</p>
+</section>
+
+<section id="halt">
+  <h2>停止と出力</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>状況</th><th>結果</th></tr></thead>
+      <tbody>
+        <tr><td>根が文字列のアトムで止まった</td><td>中身を引用符なしで出力して正常終了する（<code>"|||"</code> なら <code>|||</code>）</td></tr>
+        <tr><td>根がシンボルのアトムで止まった</td><td>その名前を出力して正常終了する（<code>goodbye</code>）</td></tr>
+        <tr><td>根がアトムでないまま止まった</td><td>折りたたみ失敗。エラー終了し、止まった時点の木を表示する</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="prose">
+    <p>入力は当面扱いません。必要なデータは、例4 の <code>rev "a" "b" "c"</code> のように初期の木に書いておきます。</p>
+  </div>
+  <h3>最内戦略の注意点</h3>
+  <div class="prose">
+    <p>最内戦略は先行評価です。条件分岐の両方の枝が先に評価されるので、両方の枝に再帰を書くと止まりません。構造でマッチして振り分けるルールを書くか、評価を遅らせたい式をルールのノードに包むことで避けられます。</p>
+  </div>
+</section>
+
+<footer><a href="./">Foldage のトップへ戻る</a></footer>
+</div>
+
+<script>
+(() => {
+  // 木は S 式で書き、印を前置する: ^ = 次に書き換わる位置、* = 直前に生まれたノード、<文字> = バッジ、@名前 = 畳んだルール
+  function parse(src) {
+    let i = 0;
+    const ws = () => { while (i < src.length && /\s/.test(src[i])) i++; };
+    const token = () => {
+      if (src[i] === '"') {
+        let j = i + 1;
+        while (src[j] !== '"') { if (src[j] === '\\') j++; j++; }
+        const t = src.slice(i, j + 1); i = j + 1; return t;
+      }
+      let j = i;
+      while (j < src.length && !/[\s()]/.test(src[j])) j++;
+      const t = src.slice(i, j); i = j; return t;
+    };
+    const node = () => {
+      ws();
+      const n = { kids: [] };
+      for (;;) {
+        if (src[i] === '^') { n.next = true; i++; }
+        else if (src[i] === '*') { n.fresh = true; i++; }
+        else if (src[i] === '<') { const j = src.indexOf('>', i); n.badge = src.slice(i + 1, j); i = j + 1; }
+        else break;
+      }
+      if (src[i] === '(') {
+        i++; ws(); n.label = token(); ws();
+        while (src[i] !== ')') { n.kids.push(node()); ws(); }
+        i++;
+      } else {
+        n.label = token();
+      }
+      return n;
+    };
+    return node();
+  }
+
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const textWidth = (s, ascii, wide) => [...s].reduce((w, ch) => w + (ch.charCodeAt(0) < 0x2000 ? ascii : wide), 0);
+  const isLeaf = n => n.kids.length === 0;
+  const kindOf = n => {
+    if (n.label.startsWith('%')) return 'outer';
+    if (n.label.startsWith('@')) return 'rule';
+    if (n.label.startsWith('"')) return 'str';
+    if (n.label.startsWith('?')) return 'var';
+    if (n.label === '->') return 'arrow';
+    return 'sym';
+  };
+  // @ は畳んだルール、% は木の外にある外側スコープを表す
+  const shown = n => /^[@%]/.test(n.label) ? n.label.slice(1) : n.label;
+
+  const NH = 22, GX = 10, LV = 52, PX = 7;
+
+  const badgeW = n => textWidth(n.badge, 6.6, 11) + 12;
+  function layout(n) {
+    n.w = Math.max(textWidth(shown(n), 7.25, 12) + PX * 2, 24);
+    // 兄弟どうしのバッジが重ならないよう、横幅はバッジ込みで確保する
+    n.slot = n.badge ? Math.max(n.w, badgeW(n)) : n.w;
+    if (isLeaf(n)) { n.sw = n.slot; return; }
+    n.kids.forEach(layout);
+    n.inner = n.kids.reduce((s, k) => s + k.sw, 0) + GX * (n.kids.length - 1);
+    n.sw = Math.max(n.slot, n.inner);
+  }
+  function place(n, x, d) {
+    n.d = d;
+    if (isLeaf(n)) { n.x = x + n.sw / 2; return; }
+    let cx = x + (n.sw - n.inner) / 2;
+    for (const k of n.kids) { place(k, cx, d + 1); cx += k.sw + GX; }
+    const mid = (n.kids[0].x + n.kids[n.kids.length - 1].x) / 2;
+    n.x = Math.min(Math.max(mid, x + n.slot / 2), x + n.sw - n.slot / 2);
+  }
+  function walk(n, f) { f(n); n.kids.forEach(k => walk(k, f)); }
+
+  function renderTree(src, opts = {}) {
+    const root = typeof src === 'string' ? parse(src) : src;
+    layout(root); place(root, 0, 0);
+    const all = []; walk(root, n => all.push(n));
+    const maxD = Math.max(...all.map(n => n.d));
+    const hasBadge = all.some(n => n.badge);
+    const M = 12, top = hasBadge ? 30 : 10;
+    const W = Math.ceil(root.sw + M * 2), H = Math.ceil(top + maxD * LV + NH + 10);
+    const Y = n => top + n.d * LV;
+    let edges = '', nodes = '';
+    for (const n of all) {
+      for (const k of n.kids) {
+        edges += `<line class="edge${kindOf(n) === 'outer' ? ' edge-outer' : ''}" x1="${n.x + M}" y1="${Y(n) + NH}" x2="${k.x + M}" y2="${Y(k)}"/>`;
+      }
+    }
+    for (const n of all) {
+      const kind = kindOf(n), x = n.x - n.w / 2 + M, y = Y(n);
+      const cls = ['nd', 'nd-' + kind];
+      if (n.fresh) cls.push('is-fresh');
+      if (opts.applied && kind === 'rule' && shown(n) === opts.applied) cls.push('is-applied');
+      if (n.next) nodes += `<rect class="next-ring" x="${x - 4}" y="${y - 4}" width="${n.w + 8}" height="${NH + 8}" rx="7"/>`;
+      nodes += `<g class="${cls.join(' ')}"><rect x="${x}" y="${y}" width="${n.w}" height="${NH}" rx="${kind === 'rule' ? NH / 2 : 4}"/>` +
+        `<text x="${n.x + M}" y="${y + NH / 2}">${esc(shown(n))}</text></g>`;
+      if (n.badge) {
+        const bw = badgeW(n);
+        nodes += `<g class="badge"><rect x="${n.x + M - bw / 2}" y="${y - 22}" width="${bw}" height="16" rx="8"/>` +
+          `<text x="${n.x + M}" y="${y - 14}">${esc(n.badge)}</text></g>`;
+      }
+    }
+    const label = esc(opts.label || '木の図');
+    return `<svg class="tree" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${edges}${nodes}</svg>`;
+  }
+
+  // 正規形（spec.md 第 7 章）で書き出す
+  function oneLine(n) {
+    if (isLeaf(n)) return true;
+    return n.kids.slice(0, -1).every(isLeaf) && oneLine(n.kids[n.kids.length - 1]);
+  }
+  function lineOf(n) {
+    if (isLeaf(n)) return n.label;
+    const k = n.kids;
+    if (k.every(isLeaf)) return [n.label, ...k.map(c => c.label)].join(' ');
+    return [n.label, ...k.slice(0, -1).map(c => c.label)].join(' ') + ': ' + lineOf(k[k.length - 1]);
+  }
+  function blockOf(n, depth) {
+    const pad = '  '.repeat(depth);
+    if (oneLine(n)) return [pad + lineOf(n)];
+    let j = 0;
+    while (j < n.kids.length && isLeaf(n.kids[j])) j++;
+    const out = [pad + [n.label, ...n.kids.slice(0, j).map(c => c.label)].join(' ')];
+    for (const c of n.kids.slice(j)) out.push(...blockOf(c, depth + 1));
+    return out;
+  }
+  function expand(n, rules) {
+    if (n.label.startsWith('@')) return expand(parse(rules[n.label.slice(1)]), rules);
+    return { label: n.label, kids: n.kids.map(k => expand(k, rules)) };
+  }
+
+  const F = '(-> (main ?..rules ?r) ?r)';
+  const EX = [
+    {
+      name: '例1 足し算',
+      intro: '2 + 1 をペアノ数（s: s z と s z）で計算し、結果を | の本数で出力する。出力は |||。ルールと変数、最内戦略、組込みの連結 ++、main を畳んで終わる方法を見る例。',
+      rules: [
+        ['R1', '(-> (add z ?n) ?n)'],
+        ['R2', '(-> (add (s ?m) ?n) (s (add ?m ?n)))'],
+        ['R3', '(-> (show z) "")'],
+        ['R4', '(-> (show (s ?n)) (++ "|" (show ?n)))'],
+        ['R5', F],
+      ],
+      steps: (() => {
+        const R = '@R1 @R2 @R3 @R4 @R5';
+        return [
+          { t: `(main ${R} (show ^(add (s (s z)) (s z))))`, note: '初期状態。帰りがけ順で最初にルールが当たるのは、show の内側にある add。' },
+          { t: `(main ${R} (show *(s ^(add (s z) (s z)))))`, at: '(add (s (s z)) (s z))', rule: 'R2', bind: '?m = (s z), ?n = (s z)', note: '外側の add を R2 で展開する。' },
+          { t: `(main ${R} (show (s *(s ^(add z (s z))))))`, at: '(add (s z) (s z))', rule: 'R2', bind: '?m = z, ?n = (s z)', note: '内側の add を R2 で展開する。' },
+          { t: `(main ${R} ^(show (s (s *(s z)))))`, at: '(add z (s z))', rule: 'R1', bind: '?n = (s z)', note: 'add z を R1 で畳む。足し算が完了し、次は外側の show の番になる。' },
+          { t: `(main ${R} *(++ "|" ^(show (s (s z)))))`, at: '(show (s (s (s z))))', rule: 'R4', bind: '?n = (s (s z))', note: 'show を R4 で展開する。' },
+          { t: `(main ${R} (++ "|" *(++ "|" ^(show (s z)))))`, at: '(show (s (s z)))', rule: 'R4', bind: '?n = (s z)', note: 'R4 をもう一度。' },
+          { t: `(main ${R} (++ "|" (++ "|" *(++ "|" ^(show z)))))`, at: '(show (s z))', rule: 'R4', bind: '?n = z', note: 'R4 をもう一度。s がすべて剥がれた。' },
+          { t: `(main ${R} (++ "|" (++ "|" ^(++ "|" *""))))`, at: '(show z)', rule: 'R3', bind: 'なし', note: 'show z を R3 で空文字列に畳む。最も内側の ++ の子がすべて文字列になった。' },
+          { t: `(main ${R} (++ "|" ^(++ "|" *"|")))`, at: '(++ "|" "")', rule: '++', bind: 'なし', note: '最も内側の ++ を組込みで連結する。' },
+          { t: `(main ${R} ^(++ "|" *"||"))`, at: '(++ "|" "|")', rule: '++', bind: 'なし', note: '連結を続ける。' },
+          { t: `^(main ${R} *"|||")`, at: '(++ "|" "||")', rule: '++', bind: 'なし', note: '計算が終わった。残る書き換え位置は根だけ。' },
+          { t: '*"|||"', at: 'main（根）', rule: 'R5', bind: '?..rules = R1〜R5, ?r = "|||"', note: 'R5 が自分自身を含むルール群ごと main を畳む。出力は |||。' },
+        ];
+      })(),
+    },
+    {
+      name: '例2 メタ書き換え',
+      intro: 'ルール M がルール G を書き換え、書き換わったルールで greet を畳む。出力は goodbye。ルールのノード全体もマッチの対象になること（メタ書き換え）を見る例。',
+      rules: [
+        ['G', '(-> greet hello)'],
+        ['M', '(-> (-> greet hello) (-> greet goodbye))'],
+        ['F', F],
+        ['G\'', '(-> greet goodbye)', 'step 1 で G が書き換わったもの'],
+      ],
+      steps: [
+        { t: '(main ^@G @M @F greet)', note: '初期状態。帰りがけ順の最初の位置は G のノード自身（ルールの内部には入らない）。G のパターン greet は -> ノードに当たらず、2 番目に試す M が当たる。' },
+        { t: '(main *@G\' @M @F ^greet)', at: 'G（ルールのノード自身）', rule: 'M', bind: 'なし', note: 'M が G のノード全体にマッチし、G を G\' に書き換える。' },
+        { t: '^(main @G\' @M @F *goodbye)', at: 'greet', rule: 'G\'', bind: 'なし', note: '書き換え後の G\' で greet を畳む。M のパターンは G\' に当たらないので、M は二度と発火しない。' },
+        { t: '*goodbye', at: 'main（根）', rule: 'F', bind: '?..rules = G\', M, F, ?r = goodbye', note: 'F が main を畳む。出力は goodbye。' },
+      ],
+    },
+    {
+      name: '例3 ルール生成',
+      intro: 'ルール K が mkid id を新しいルール N に書き換え、N が id foo を畳む。出力は foo。変数のレベル ??x、ラベル位置の変数、生成したルールが働き始める時点を見る例。',
+      rules: [
+        ['K', '(-> (mkid ?f) (-> (?f ??x) ??x))'],
+        ['F', F],
+        ['N', '(-> (id ?x) ?x)', 'step 1 で K が生成する'],
+      ],
+      steps: [
+        { t: '(main @K @F ^(mkid id) (id foo))', note: '初期状態。K の置換に含まれる -> は K の内部にあるので、まだルールとして働かない。' },
+        { t: '(main @K @F *@N ^(id foo))', at: '(mkid id)', rule: 'K', bind: '?f = id', note: 'K が mkid id を新しいルール N に書き換える。??x は ? が 1 つ消費されて ?x になる。' },
+        { t: '^(main @K @F @N *foo)', at: '(id foo)', rule: 'N', bind: '?x = foo', note: '生成された N が id foo を畳む。N は main の子なので、スコープは main の部分木全体。' },
+        { t: '*foo', at: 'main（根）', rule: 'F', bind: '?..rules = K, F, N, ?r = foo', note: 'F が K, F, N の 3 本ごと main を畳む。出力は foo。' },
+      ],
+    },
+    {
+      name: '例4 逆順',
+      intro: '文字列の並び "a" "b" "c" を逆順に連結する。出力は cba。列変数 ?..rest と、葉と子を持つノードの違いを見る例。',
+      rules: [
+        ['P', '(-> (rev ?c ?..rest) (++ (rev ?..rest) ?c))'],
+        ['E', '(-> rev "")'],
+        ['F', F],
+      ],
+      steps: (() => {
+        const R = '@P @E @F';
+        return [
+          { t: `(main ${R} ^(rev "a" "b" "c"))`, note: '初期状態。逆順にしたい並びを、根の最後の子 rev "a" "b" "c" として初期の木に書いておく。' },
+          { t: `(main ${R} *(++ ^(rev "b" "c") "a"))`, at: '(rev "a" "b" "c")', rule: 'P', bind: '?c = "a", ?..rest = "b" "c"', note: 'P が先頭の文字を外して後ろに回す。' },
+          { t: `(main ${R} (++ *(++ ^(rev "c") "b") "a"))`, at: '(rev "b" "c")', rule: 'P', bind: '?c = "b", ?..rest = "c"', note: 'P をもう一度。' },
+          { t: `(main ${R} (++ (++ *(++ ^rev "c") "b") "a"))`, at: '(rev "c")', rule: 'P', bind: '?c = "c", ?..rest = （空）', note: '?..rest が空列に展開されるので、子のない rev、つまりシンボル rev の葉が残る。子にシンボルがあるので、この ++ はまだ連結できない。' },
+          { t: `(main ${R} (++ (++ ^(++ *"" "c") "b") "a"))`, at: 'rev（葉）', rule: 'E', bind: 'なし', note: '葉の rev を E で空文字列に畳む。E のパターン rev は葉なので、子を持つ rev には当たらない。' },
+          { t: `(main ${R} (++ ^(++ *"c" "b") "a"))`, at: '(++ "" "c")', rule: '++', bind: 'なし', note: '最も内側の ++ を連結する。' },
+          { t: `(main ${R} ^(++ *"cb" "a"))`, at: '(++ "c" "b")', rule: '++', bind: 'なし', note: '連結を続ける。' },
+          { t: `^(main ${R} *"cba")`, at: '(++ "cb" "a")', rule: '++', bind: 'なし', note: '計算が終わった。残る書き換え位置は根だけ。' },
+          { t: '*"cba"', at: 'main（根）', rule: 'F', bind: '?..rules = P, E, F, ?r = "cba"', note: 'F が main を畳む。出力は cba。' },
+        ];
+      })(),
+    },
+  ];
+
+  // 冒頭の 4 コマ
+  const heroNotes = ['初期状態', 'M が G を書き換える', 'G\' が greet を畳む', 'F が main ごと畳み、goodbye が出力になる'];
+  document.getElementById('heroStrip').innerHTML = EX[1].steps.map((s, k) =>
+    `<div class="frame"><div class="step">step ${k}</div><div class="art">${renderTree(s.t, { label: `例2 step ${k} の木` })}</div><p>${esc(heroNotes[k])}</p></div>`
+  ).join('');
+
+  const syntaxRows = [
+    ['s: add ?m ?n', '(s (add ?m ?n))'],
+    ['s: s: s z', '(s (s (s z)))'],
+    ['a b: c d', '(a b (c d))'],
+    ['->\n  show: s ?n\n  ++ "|": show ?n', '(-> (show (s ?n)) (++ "|" (show ?n)))'],
+  ];
+  document.getElementById('syntaxFig').innerHTML = syntaxRows.map(([src, t]) =>
+    `<pre>${esc(src)}</pre><div class="art">${renderTree(t, { label: src.replace(/\n/g, ' ') + ' の木' })}</div>`
+  ).join('');
+
+  document.getElementById('ruleFig').innerHTML =
+    renderTree('(-> <パターン>(show (s ?n)) <置換>(++ "|" (show ?n)))', { label: 'ルール R4 の木。左の子がパターン、右の子が置換' });
+
+  document.getElementById('orderFig').innerHTML =
+    `<div>${renderTree('<5>(main <1>@G <2>@M <3>@F <4>greet)', { label: 'greet が右端にある場合の走査順' })}` +
+    `<p class="verdict">出力 <strong>goodbye</strong>。1 で M が G を書き換えてから、4 の greet が書き換わった G' で畳まれる。</p></div>` +
+    `<div>${renderTree('<5>(main <1>greet <2>@G <3>@M <4>@F\')', { label: 'greet が左端にある場合の走査順' })}` +
+    `<p class="verdict">出力 <strong>hello</strong>。1 の greet が先に G で畳まれる。2 で M が G を書き換えても、greet はもう残っていない。</p></div>`;
+
+  document.getElementById('scopeFig').innerHTML =
+    renderTree('(%外側スコープ <5>@連結ルール群 (main <3>@A (f <1>@B <2>@C (g ^x)) <4>@D))', { label: '位置 x で試すルールの順序。B, C, A, D、最後に外側スコープの連結ルール群' });
+
+  document.getElementById('escapeFig').innerHTML =
+    `<div>${renderTree('(-> (?f ??x) ??x)', { label: 'K の置換部分' })}<p class="verdict">K の置換部分（K の内部なので不透明）</p></div>` +
+    `<div class="between">?f = id を代入<br>?? を 1 つ消費</div>` +
+    `<div>${renderTree('(-> *(id *?x) *?x)', { label: '書き出されたルール N' })}<p class="verdict">木に書き出されたルール N</p></div>`;
+
+  // 変数の節の図
+  const panel = (head, t, verdict) =>
+    `<div><div class="panel-head">${esc(head)}</div>${renderTree(t, { label: head })}${verdict ? `<p class="verdict">${verdict}</p>` : ''}</div>`;
+  const between = s => `<div class="between">${s}</div>`;
+
+  document.getElementById('bindFig1').innerHTML =
+    panel('パターン', '(add (s ?m) ?n)') + between('当てる') +
+    panel('対象', '(add (s <?m>(s z)) <?n>(s z))');
+  document.getElementById('bindFig2').innerHTML =
+    panel('置換', '(s (add ?m ?n))') + between('差し込む') +
+    panel('結果', '(s (add <?m>(s z) <?n>(s z)))');
+
+  document.getElementById('eqFig').innerHTML =
+    panel('ルール', '(-> (eq ?x ?x) yes)') +
+    panel('当たる', '(eq <?x>(s z) <?x>(s z))', '2 つの <strong>?x</strong> が同じ構造なので、<strong>yes</strong> に畳まれる。') +
+    panel('当たらない', '(eq <?x>z <z と不一致>(s z))', '<strong>z</strong> と <strong>s z</strong> は構造が違う。');
+
+  document.getElementById('seqFig').innerHTML =
+    panel('パターン', '(rev ?c ?..rest)') + between('当てる') +
+    panel('対象', '(rev <?c>"a" <?..rest>"b" <?..rest>"c")') + between('展開する') +
+    panel('結果', '(++ (rev <?..rest>"b" <?..rest>"c") <?c>"a")');
+
+  document.getElementById('shortFig').innerHTML =
+    panel('パターン', '(f ?..a x ?..b)') + between('当てる') +
+    panel('対象', '(f <?..a>1 x <?..b>2 <?..b>x <?..b>3)');
+
+  document.getElementById('labelFig').innerHTML =
+    panel('パターン', '(?f ?x)') +
+    panel('当たる', '<?f = ラベル id>(id <?x>foo)', '<strong>?f</strong> には部分木ではなくラベル <strong>id</strong> が入る。') +
+    panel('当たらない', '(g a b)', '子の数が 2 つなので一致しない。');
+
+  // ステップ実行
+  const tabs = document.getElementById('exTabs');
+  const range = document.getElementById('stepRange');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  let ex = 0, step = 0;
+
+  tabs.innerHTML = EX.map((e, k) =>
+    `<button type="button" role="tab" id="exTab${k}" data-ex="${k}" aria-selected="${k === 0}">${esc(e.name)}</button>`
+  ).join('');
+  tabs.addEventListener('click', e => {
+    const b = e.target.closest('button[data-ex]');
+    if (!b) return;
+    ex = +b.dataset.ex; step = 0; draw();
+  });
+  range.addEventListener('input', () => { step = +range.value; draw(); });
+  prevBtn.addEventListener('click', () => { if (step > 0) { step--; draw(); } });
+  nextBtn.addEventListener('click', () => { if (step < EX[ex].steps.length - 1) { step++; draw(); } });
+  document.getElementById('stepper').addEventListener('keydown', e => {
+    if (e.target === range) return;
+    if (e.key === 'ArrowRight') { nextBtn.click(); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { prevBtn.click(); e.preventDefault(); }
+  });
+
+  function draw() {
+    const E = EX[ex], S = E.steps[step], last = E.steps.length - 1;
+    const rules = Object.fromEntries(E.rules.map(r => [r[0], r[1]]));
+    [...tabs.children].forEach((b, k) => b.setAttribute('aria-selected', String(k === ex)));
+    document.getElementById('exIntro').textContent = E.intro;
+    range.max = last; range.value = step;
+    prevBtn.disabled = step === 0; nextBtn.disabled = step === last;
+    document.getElementById('stepNo').textContent = `step ${step} / ${last}`;
+
+    const cap = document.getElementById('stepCaption');
+    cap.innerHTML = `<p class="note">${esc(S.note)}</p>` + (S.at ?
+      `<dl><dt>位置</dt><dd><code>${esc(S.at)}</code></dd><dt>適用</dt><dd><code>${esc(S.rule)}</code>${S.rule === '++' ? '（外側スコープの組込みルール）' : ''}</dd><dt>束縛</dt><dd><code>${esc(S.bind)}</code></dd></dl>` : '');
+
+    const tree = parse(S.t);
+    document.getElementById('treePane').innerHTML =
+      renderTree(tree, { applied: S.rule, label: `${E.name} step ${step} の木` });
+    document.getElementById('srcPane').textContent = blockOf(expand(tree, rules), 0).join('\n');
+
+    document.getElementById('ruleTable').innerHTML =
+      '<thead><tr><th>名前</th><th>ルール（S 式）</th><th>備考</th></tr></thead><tbody>' +
+      E.rules.map(r => `<tr class="${r[0] === S.rule ? 'is-applied' : ''}"><td>${esc(r[0])}</td><td><code>${esc(r[1])}</code></td><td>${esc(r[2] || '')}</td></tr>`).join('') +
+      '</tbody>';
+  }
+  draw();
+})();
+</script>

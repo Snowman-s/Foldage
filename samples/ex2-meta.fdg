@@ -1,0 +1,10 @@
+# 例2: メタ書き換え。2 本目のルールが 1 本目のルールを書き換える
+main
+  -> greet hello
+  ->
+    -> greet hello
+    -> greet goodbye
+  ->
+    main ?..rules ?r
+    ?r
+  greet

@@ -1,0 +1,6 @@
+# 例4: 文字列の並びを逆順にする
+main
+  -> (rev ?c ?..rest) (++ (rev ?..rest) ?c)
+  -> rev ""
+  -> (main ?..rules ?r) ?r
+  rev "a" "b" "c"
