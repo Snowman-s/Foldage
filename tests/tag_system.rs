@@ -63,7 +63,8 @@ fn line(head: &str, symbols: &[&str]) -> String {
 fn execute(src: &str) -> (String, usize) {
     let mut steps = 0;
     let outcome = run(parse(src).unwrap(), Some(100_000), &mut |n, _| steps = n);
-    let Outcome::Folded(text) = outcome else { panic!("畳み切れなかった: {outcome:?}") };
+    let Outcome::Folded(tree) = outcome else { panic!("畳み切れなかった: {outcome:?}") };
+    let text = tree.atom_text().unwrap().to_string();
     (text, steps)
 }
 

@@ -24,12 +24,22 @@ pub struct Redex {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// 根が単一のアトムになった。中身は出力する字面（文字列は引用符を外した中身、シンボルは名前）。
-    Folded(String),
+    /// 根が単一のアトムになった。中身はそのアトム。
+    /// 出力の字面だけではシンボルか文字列か区別できず、ソースとして書き戻せないので、木のまま持つ。
+    Folded(Node),
     /// 書き換えられる箇所がないまま、根がアトムにならなかった（折りたたみ失敗）。
     Stuck(Node),
     /// ステップ数の上限に達した。
     StepLimit(Node),
+}
+
+impl Outcome {
+    /// 止まった時点の木 Tₙ（spec.md §6.6）。どの終わり方でも、そのまま正規形にして書き出せる。
+    pub fn tree(&self) -> &Node {
+        match self {
+            Outcome::Folded(tree) | Outcome::Stuck(tree) | Outcome::StepLimit(tree) => tree,
+        }
+    }
 }
 
 /// スコープに置かれたルール。
@@ -197,10 +207,10 @@ pub fn run(mut root: Node, max_steps: Option<usize>, on_step: &mut dyn FnMut(usi
         count += 1;
         on_step(count, &root);
     }
-    // Node は Drop を実装しているのでフィールドを取り出せない。アトムなので字面の複製は小さい
-    match root.atom_text() {
-        Some(text) => Outcome::Folded(text.to_string()),
-        None => Outcome::Stuck(root),
+    if root.atom_text().is_some() {
+        Outcome::Folded(root)
+    } else {
+        Outcome::Stuck(root)
     }
 }
 
@@ -313,7 +323,7 @@ mod tests {
         let src = "main\n  ->\n    main ?..rules ?r\n    ?r\n  ++ \"a\" \"b\"";
         let mut steps = 0;
         let outcome = run(t(src), None, &mut |n, _| steps = n);
-        assert_eq!(outcome, Outcome::Folded("ab".into()));
+        assert_eq!(outcome, Outcome::Folded(t("\"ab\"")));
         assert_eq!(steps, 2);
     }
 
@@ -339,13 +349,20 @@ mod tests {
     }
 
     #[test]
+    fn outcome_tree_is_the_halted_tree() {
+        assert_eq!(Outcome::Folded(t("yes")).tree(), &t("yes"));
+        assert_eq!(Outcome::Stuck(t("main a b")).tree(), &t("main a b"));
+        assert_eq!(Outcome::StepLimit(t("main: -> a b")).tree(), &t("main: -> a b"));
+    }
+
+    #[test]
     fn deep_tree_runs_without_overflow() {
         // 深さ 10 万の連鎖 2 本を探索し、非線形マッチで比べ、束縛として複製する
         let chain = format!("{}z", "s: ".repeat(100_000));
         let src = format!("main\n  ->\n    main ?r: eq ?x ?x\n    yes\n  eq\n    {chain}\n    {chain}");
         let mut steps = 0;
         let outcome = run(t(&src), None, &mut |n, _| steps = n);
-        assert_eq!(outcome, Outcome::Folded("yes".into()));
+        assert_eq!(outcome, Outcome::Folded(t("yes")));
         assert_eq!(steps, 1);
     }
 

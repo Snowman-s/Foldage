@@ -8,7 +8,8 @@ use foldage::printer::to_source;
 fn execute(src: &str) -> (String, usize, Vec<String>) {
     let mut trace = Vec::new();
     let outcome = run(parse(src).unwrap(), Some(1000), &mut |_, tree| trace.push(to_source(tree)));
-    let Outcome::Folded(text) = outcome else { panic!("畳み切れなかった: {outcome:?}") };
+    let Outcome::Folded(tree) = outcome else { panic!("畳み切れなかった: {outcome:?}") };
+    let text = tree.atom_text().unwrap().to_string();
     (text, trace.len() - 1, trace)
 }
 

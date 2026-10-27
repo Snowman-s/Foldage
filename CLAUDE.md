@@ -17,9 +17,10 @@ cargo test engine::tests::nearest_scope_wins # 単体テストを 1 本
 cargo run -- samples/ex1-add.fdg             # ||| を出力（末尾改行なし）
 cargo run -- <file> --trace                  # 各ステップの木を正規形で標準エラーに表示
 cargo run -- <file> --max-steps 1000
+cargo run -- <file> --burn                   # 止まった時点の木（正規形）でソースファイルを上書き
 ```
 
-終了コード: 0 正常終了 / 1 折りたたみ失敗・ステップ上限 / 2 使い方・読み込み・構文エラー。
+終了コード: 0 正常終了 / 1 折りたたみ失敗・ステップ上限 / 2 使い方・読み込み・構文・`--burn` の書き込みエラー。
 
 ## 仕様の所在
 
